@@ -1,88 +1,111 @@
 module.exports.config = {
   name: "antirobberyEvent",
   eventType: ["log:thread-admins", "log:unsubscribe"],
-  version: "2.0.3",
+  version: "2.5.0",
   credits: "ChatGPT + NN + Jaylord La Peña",
-  description: "Protects specific admins and bot accounts from removal or demotion",
+  description: "Protects specific admins and bots from removal or kick (auto re-add with retry)",
 };
 
-// 👑 Protected Admins & Bot UIDs (ilagay lahat ng Facebook ID mo at ng mga bot mo dito)
+// 👑 Protected Admins & Bots UID (ilagay lahat ng Facebook ID dito)
 const PROTECTED_ADMINS = [
-  "61559999326713", // Main Admin
-  "61563731477181", // Another Protected Admin
-  "61578564545419", // Another Bot UID (Protected)
+  "61559999326713", // Main Admin (Jaylord)
+  "61563731477181", // Secondary Admin
+  "61578564545419", // Jandel Bot
 ];
+
+// Helper: wait
+const sleep = ms => new Promise(res => setTimeout(res, ms));
 
 module.exports.run = async function ({ api, event }) {
   const { threadID, logMessageType, logMessageData, author } = event;
+  const botID = api.getCurrentUserID();
 
   try {
-    const botID = api.getCurrentUserID(); // Current bot UID
-
-    // ✅ Case 1: Protected admin removed as admin
+    // 🧩 CASE 1: Protected Admin Removed as Admin
     if (
       logMessageType === "log:thread-admins" &&
       logMessageData.ADMIN_EVENT === "remove_admin" &&
       PROTECTED_ADMINS.includes(logMessageData.TARGET_ID)
     ) {
-      const protectedAdmin = logMessageData.TARGET_ID;
+      const protectedID = logMessageData.TARGET_ID;
 
-      // Demote attacker agad, but not if bot itself
-      if (author && author !== botID) {
-        await api.changeAdminStatus(threadID, author, false);
+      if (author !== botID) {
+        try {
+          await api.changeAdminStatus(threadID, author, false);
+        } catch {}
       }
 
-      // Ibalik si protected admin
-      await api.changeAdminStatus(threadID, protectedAdmin, true);
+      await sleep(2000);
+      try {
+        await api.changeAdminStatus(threadID, protectedID, true);
+      } catch {}
 
-      // Fetch names for better log messages
-      const info = await api.getUserInfo([protectedAdmin, author]);
-      const protectedName = info[protectedAdmin]?.name || "Protected Admin";
+      const info = await api.getUserInfo([protectedID, author]);
+      const protectedName = info[protectedID]?.name || "Protected Member";
       const attackerName = info[author]?.name || "Attacker";
 
-      // Notify GC
       api.sendMessage(
-        `⚠️ Anti-Robbery Activated!\n\n👑 ${protectedName} has been restored as admin.\n❌ ${
-          author !== botID ? `${attackerName} has been demoted for removing a protected admin.` : ""
-        }`,
+        `⚠️ Anti-Robbery Activated!\n\n👑 ${protectedName} has been restored as admin.\n❌ ${author !== botID ? `${attackerName} has been demoted for removing a protected admin/bot.` : ""}`,
         threadID
       );
     }
 
-    // ✅ Case 2: Protected admin kicked from GC
+    // 🧩 CASE 2: Protected Admin Kicked from Group
     if (
       logMessageType === "log:unsubscribe" &&
       PROTECTED_ADMINS.includes(logMessageData.leftParticipantFbId)
     ) {
-      const protectedAdmin = logMessageData.leftParticipantFbId;
+      const protectedID = logMessageData.leftParticipantFbId;
 
-      // Demote attacker agad, but not if bot itself
-      if (author && author !== botID) {
-        await api.changeAdminStatus(threadID, author, false);
+      if (author !== botID) {
+        try {
+          await api.changeAdminStatus(threadID, author, false);
+        } catch {}
       }
 
-      // Ibalik sa GC si protected admin
-      try {
-        await api.addUserToGroup(protectedAdmin, threadID);
-        await api.changeAdminStatus(threadID, protectedAdmin, true);
-      } catch (err) {
-        console.warn(`⚠️ Unable to re-add ${protectedAdmin}:`, err.message);
+      // Function to re-add with retry
+      const reAddProtected = async () => {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const threadInfo = await api.getThreadInfo(threadID);
+            const stillOut = !threadInfo.participantIDs.includes(protectedID);
+
+            if (stillOut) {
+              await api.addUserToGroup(protectedID, threadID);
+              console.log(`✅ [AntiRobbery] Re-add attempt ${attempt} success.`);
+              return true;
+            } else {
+              console.log(`ℹ️ [AntiRobbery] Protected member already inside.`);
+              return true;
+            }
+          } catch (err) {
+            console.error(`❌ Re-add attempt ${attempt} failed:`, err);
+            await sleep(3000);
+          }
+        }
+        return false;
+      };
+
+      // Try re-adding 3 times
+      const success = await reAddProtected();
+
+      if (success) {
+        await sleep(3000);
+        try {
+          await api.changeAdminStatus(threadID, protectedID, true);
+        } catch {}
       }
 
-      // Fetch names
-      const info = await api.getUserInfo([protectedAdmin, author]);
-      const protectedName = info[protectedAdmin]?.name || "Protected Admin";
+      const info = await api.getUserInfo([protectedID, author]);
+      const protectedName = info[protectedID]?.name || "Protected Member";
       const attackerName = info[author]?.name || "Attacker";
 
-      // Notify GC
       api.sendMessage(
-        `⚠️ Anti-Kick Activated!\n\n👑 ${protectedName} has been re-added and restored as admin.\n❌ ${
-          author !== botID ? `${attackerName} has been demoted for kicking a protected admin.` : ""
-        }`,
+        `⚠️ Anti-Kick Activated!\n\n👑 ${protectedName} has been re-added and restored as admin.\n❌ ${author !== botID ? `${attackerName} has been demoted for kicking a protected admin/bot.` : ""}`,
         threadID
       );
     }
   } catch (err) {
-    console.error("Anti-robbery error:", err);
+    console.error("❌ Anti-robbery error:", err);
   }
 };
