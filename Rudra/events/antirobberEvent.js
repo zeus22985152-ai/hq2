@@ -10,7 +10,7 @@ module.exports.config = {
 const PROTECTED_ADMINS = [
   "61559999326713", // Main Admin (Jaylord)
   "61563731477181", // Secondary Admin
-  "61578564545419", // Jandel Bot
+  "61554885397487", // Jandel Bot
 ];
 
 // Helper: wait
